@@ -1,12 +1,15 @@
 import os
 import time
 import requests
+from io import BytesIO
 from datetime import datetime
+from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
 from dotenv import load_dotenv
 
 # Load environment variables from .env if exists
@@ -17,8 +20,44 @@ load_dotenv()
 OHM_USERNAME = os.getenv("OHM_USERNAME", "your_username_here")
 OHM_PASSWORD = os.getenv("OHM_PASSWORD", "your_password_here")
 
-# Reduce during debugging if needed
-LANGUAGES_TO_TEST = ["fr"]
+# Adjust during debugging if needed
+# LANGUAGES_TO_TEST = ["ja", "es"]
+
+LANGUAGES_TO_TEST = [
+    # 🥇 Level 1 – Global must-have languages
+    "en", "es", "zh-CN", "zh-TW", "zh-hk",
+    "hi", "ar", "pt", "pt-BR", "pt-PT",
+    "fr", "de", "ru", "ja"
+
+    # # 🥈 Level 2 – High regional/population relevance
+    # "it", "ko", "tr", "vi", "fa",
+    # "pl", "uk", "id", "ms", "bn",
+    # "ta", "te", "th",
+
+    # # 🥉 Level 3 – Medium-size European (EU, Nordic, Balkan)
+    # "nl", "sv", "da", "fi", "nb", "nn",
+    # "cs", "sk", "ro", "el", "hu",
+    # "sr", "sr-Latn", "hr", "sl",
+    # "bg", "lt", "lv", "et",
+
+    # # 🟡 Level 4 – Co-official languages and active communities
+    # "ca", "eu", "gl", "cy", "ga",
+    # "br", "oc", "ast", "scn", "fy", "gd",
+
+    # # ⚪ Level 5 – Local variants, dialects, minority languages
+    # "arz", "az", "ba", "be", "be-Tarask",
+    # "bs", "ce", "diq", "dsb", "gcf",
+    # "gsw", "hsb", "ia", "is", "ka",
+    # "kab", "kk-cyrl", "km", "kn", "ku-Latn",
+    # "lb", "mk", "mo", "mr", "my",
+    # "nds", "ne", "nqo", "pa", "pnb",
+    # "ps", "sat", "sc", "sco", "sh",
+    # "skr-arab", "sq", "tl", "tt", "xmf",
+    # "yi", "yo",
+
+    # # ⚙️ Level 6 – Special / technical (not real user-facing languages)
+    # "en-GB", "fit", "fur", "qqq", "README", "zh-TW.yml"
+]
 
 URLS_TO_CHECK = [
     "/",
@@ -43,10 +82,48 @@ else:
 print(f"🚀 Running tests on: {ENVIRONMENT.upper()}")
 print(f"🌐 Base URL: {BASE_URL}")
 
+# ======================= UTILITIES =======================
+
+def ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+def capture_frame(driver, frames_list):
+    """
+    Capture a screenshot frame from Selenium driver and append to frames_list as a PIL Image.
+    """
+    try:
+        png = driver.get_screenshot_as_png()
+        img = Image.open(BytesIO(png)).convert("RGB")
+        frames_list.append(img)
+    except Exception:
+        pass
+
+def save_gif(frames_list, out_path, fps=2):
+    """
+    Save a list of PIL Images as an animated GIF.
+    fps: frames per second (approx). GIF uses duration ms per frame.
+    """
+    if not frames_list:
+        return
+    duration_ms = int(1000 / max(1, fps))
+    try:
+        frames_list[0].save(
+            out_path,
+            save_all=True,
+            append_images=frames_list[1:],
+            duration=duration_ms,
+            loop=0,
+            optimize=False,
+            disposal=2,
+        )
+        print(f"🎥 Saved recording: {out_path}")
+    except Exception as e:
+        print(f"⚠️ Failed to write GIF '{out_path}': {e}")
+
 # =============================================================
 
 def get_driver():
-    """Configure driver to connect to Chrome container via Selenium Grid"""
+    """Connect to the Selenium container with retries."""
     options = Options()
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -55,14 +132,22 @@ def get_driver():
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-plugins")
 
-    driver = webdriver.Remote(
-        command_executor="http://chrome:4444/wd/hub",
-        options=options,
-    )
-    return driver
+    endpoint = "http://chrome:4444/wd/hub"
+    last_err = None
+    for attempt in range(1, 13):  # ~1 minute
+        try:
+            print(f"🕐 Connecting to Selenium ({endpoint}) attempt {attempt}/12 ...")
+            driver = webdriver.Remote(command_executor=endpoint, options=options)
+            print("✅ Connected to Selenium.")
+            return driver
+        except Exception as e:
+            last_err = e
+            time.sleep(5)
+
+    raise RuntimeError(f"Could not connect to Selenium at {endpoint}: {last_err}")
 
 def login(driver, wait):
-    """Perform login using form with id='login_form'"""
+    """Perform login using form with id='login_form'."""
     driver.get(f"{BASE_URL}/login")
 
     # Wait for the form
@@ -171,7 +256,7 @@ def verify_language_change(driver, lang_code, http_session):
 
 def verify_site_languages():
     """
-    Automate login, language switching, verification of the applied language, and URL checks.
+    Automate login, language switching, per-language recording, verification of the applied language, and URL checks.
     """
     print("🔧 Setting up Chrome driver...")
     driver = get_driver()
@@ -179,7 +264,9 @@ def verify_site_languages():
 
     http_session = requests.Session()
 
-    os.makedirs(os.path.dirname(ERROR_LOG_FILE), exist_ok=True)
+    ensure_dir(os.path.dirname(ERROR_LOG_FILE))
+    ensure_dir("logs/screens")
+    ensure_dir("logs/recordings")
 
     with open(ERROR_LOG_FILE, "w") as f:
         f.write(f"Language verification test started - {datetime.now():%Y-%m-%d %H:%M:%S}\n")
@@ -195,8 +282,7 @@ def verify_site_languages():
 
         # Transfer cookies to requests session
         print("🍪 Transferring session cookies...")
-        cookies = driver.get_cookies()
-        for cookie in cookies:
+        for cookie in driver.get_cookies():
             http_session.cookies.set(cookie["name"], cookie["value"])
         print("✅ Cookies transferred successfully.")
 
@@ -205,29 +291,60 @@ def verify_site_languages():
 
         for lang_code in LANGUAGES_TO_TEST:
             print(f"\n🌍 --- Changing language to: '{lang_code}' ---")
+            frames = []
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_gif = f"logs/recordings/lang_{lang_code}_{ts}.gif"
+
             try:
+                # Go to preferences
                 driver.get(preferences_url)
                 wait.until(EC.presence_of_element_located((By.ID, "user_languages")))
+                capture_frame(driver, frames)
 
-                # Change language
-                lang_input = driver.find_element(By.ID, "user_languages")
-                lang_input.clear()
-                lang_input.send_keys(lang_code)
+                # 🔧 FIXED: Change language using proper Select handling
+                try:
+                    # Try as a <select> dropdown first
+                    lang_select = Select(driver.find_element(By.ID, "user_languages"))
+                    
+                    # Clear previous selections (if multi-select)
+                    try:
+                        lang_select.deselect_all()
+                    except Exception:
+                        pass  # Not a multi-select, that's fine
+                    
+                    # Select the new language
+                    lang_select.select_by_value(lang_code)
+                    print(f"🔧 Selected language '{lang_code}' via dropdown")
+                    
+                except Exception:
+                    # Fallback: treat as text input (original method)
+                    print(f"🔧 Fallback: treating as text input for '{lang_code}'")
+                    lang_input = driver.find_element(By.ID, "user_languages")
+                    lang_input.clear()
+                    lang_input.send_keys(lang_code)
 
+                capture_frame(driver, frames)  # after language selection
+
+                # Submit the form
                 commit_btn = driver.find_element(By.CSS_SELECTOR, "input[name='commit']")
                 commit_btn.click()
 
-                # Wait for confirmation (flash) or full load
+                # 🔄 Esperar a que realmente se apliquen los cambios
                 try:
+                    # Esperar un mensaje flash
                     wait.until(EC.visibility_of_element_located((By.CLASS_NAME, "flash-notice")))
                 except Exception:
+                    # Si no hay flash, esperar a que la página recargue
                     wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
 
-                # Hard navigate to homepage to ensure new language is reflected
+                # 🔄 Pausa adicional para que el servidor guarde la preferencia
+                time.sleep(2)
+                # Navigate to homepage to reflect new language
                 print(f"✅ Language updated to '{lang_code}'. Verifying change...")
                 driver.get(BASE_URL)
                 wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
-                time.sleep(1.0)
+                time.sleep(3)
+                capture_frame(driver, frames)
 
                 # Verify language change actually worked
                 language_verified = verify_language_change(driver, lang_code, http_session)
@@ -237,11 +354,17 @@ def verify_site_languages():
                     with open(ERROR_LOG_FILE, "a") as f:
                         f.write(error_msg + "\n")
 
-                # Test URLs with the new language
+                # Test URLs with the new language (also capture screens)
                 print(f"🔍 Testing URLs with language '{lang_code}'...")
                 for url_path in URLS_TO_CHECK:
                     full_url = BASE_URL + url_path
                     try:
+                        # Navigate via browser (for recording)
+                        driver.get(full_url)
+                        wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+                        capture_frame(driver, frames)
+
+                        # Verify status via requests session
                         response = http_session.get(full_url, timeout=10)
                         if response.status_code >= 400:
                             error_message = f"❌ ERROR | Lang: {lang_code} | URL: {full_url} | Status: {response.status_code}"
@@ -255,22 +378,21 @@ def verify_site_languages():
                         print(msg)
                         with open(ERROR_LOG_FILE, "a") as f:
                             f.write(msg + "\n")
-                    time.sleep(0.3)
+                    time.sleep(0.2)
 
             except Exception as e:
                 # Detailed diagnostics: save screenshot and HTML
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                shot = f"logs/screens/error_{ENVIRONMENT}_{lang_code}_{ts}.png"
-                html = f"logs/screens/error_{ENVIRONMENT}_{lang_code}_{ts}.html"
-                os.makedirs("logs/screens", exist_ok=True)
+                ts_err = datetime.now().strftime("%Y%m%d_%H%M%S")
+                shot = f"logs/screens/error_{ENVIRONMENT}_{lang_code}_{ts_err}.png"
+                html = f"logs/screens/error_{ENVIRONMENT}_{lang_code}_{ts_err}.html"
                 try:
                     driver.save_screenshot(shot)
-                except:
+                except Exception:
                     pass
                 try:
                     with open(html, "w", encoding="utf-8") as fh:
                         fh.write(driver.page_source)
-                except:
+                except Exception:
                     pass
                 current_url = ""
                 try:
@@ -281,6 +403,12 @@ def verify_site_languages():
                 print(msg)
                 with open(ERROR_LOG_FILE, "a") as f:
                     f.write(msg + "\n")
+            finally:
+                # Save per-language GIF recording even if errors occurred
+                try:
+                    save_gif(frames, out_gif, fps=2)
+                except Exception:
+                    pass
 
     except Exception as e:
         msg = f"\n💥 Critical error: {e}"
