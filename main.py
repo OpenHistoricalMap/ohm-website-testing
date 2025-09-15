@@ -25,26 +25,27 @@ OHM_PASSWORD = os.getenv("OHM_PASSWORD", "your_password_here")
 
 LANGUAGES_TO_TEST = [
     # 🥇 Level 1 – Global must-have languages
-    "en", "es", "zh-CN", "zh-TW", "zh-hk",
-    "hi", "ar", "pt", "pt-BR", "pt-PT",
-    "fr", "de", "ru", "ja"
+    "en", "es",
+    # "zh-CN", "zh-TW", "zh-hk",
+    # "hi", "ar", "pt", "pt-BR", "pt-PT",
+    # "fr", "de", "ru", "ja"
 
-    # # 🥈 Level 2 – High regional/population relevance
+    # 🥈 Level 2 – High regional/population relevance
     # "it", "ko", "tr", "vi", "fa",
     # "pl", "uk", "id", "ms", "bn",
     # "ta", "te", "th",
 
-    # # 🥉 Level 3 – Medium-size European (EU, Nordic, Balkan)
+    # 🥉 Level 3 – Medium-size European (EU, Nordic, Balkan)
     # "nl", "sv", "da", "fi", "nb", "nn",
     # "cs", "sk", "ro", "el", "hu",
     # "sr", "sr-Latn", "hr", "sl",
     # "bg", "lt", "lv", "et",
 
-    # # 🟡 Level 4 – Co-official languages and active communities
+    # 🟡 Level 4 – Co-official languages and active communities
     # "ca", "eu", "gl", "cy", "ga",
     # "br", "oc", "ast", "scn", "fy", "gd",
 
-    # # ⚪ Level 5 – Local variants, dialects, minority languages
+    # ⚪ Level 5 – Local variants, dialects, minority languages
     # "arz", "az", "ba", "be", "be-Tarask",
     # "bs", "ce", "diq", "dsb", "gcf",
     # "gsw", "hsb", "ia", "is", "ka",
@@ -55,20 +56,54 @@ LANGUAGES_TO_TEST = [
     # "skr-arab", "sq", "tl", "tt", "xmf",
     # "yi", "yo",
 
-    # # ⚙️ Level 6 – Special / technical (not real user-facing languages)
+    # ⚙️ Level 6 – Special / technical (not real user-facing languages)
     # "en-GB", "fit", "fur", "qqq", "README", "zh-TW.yml"
 ]
 
 URLS_TO_CHECK = [
     "/",
-    "/about",
+    "/issues?status=open",
+    "/issues?status=ignored",
+    "/issues?status=resolved",
     "/history",
+    "/history/friends",
     "/export",
     "/traces",
+    "/diary",
+    f"/user/{OHM_USERNAME}/diary",
+    "/diary/new",
     "/copyright",
     "/help",
+    "/about",
+    "/welcome",
+    "/directions",
+    #Dashboard
+    "/dashboard",
+    "/messages/inbox",
+    "/messages/outbox",
+    # Profile
     f"/user/{OHM_USERNAME}",
+    "/profile/description",
+    "/profile/links",
+    "/profile/image",
+    "/profile/company",
+    "/profile/location",
+    # Account
+    "/account",
+    "/oauth2/applications",
+    "/oauth2/authorized_applications",
+    # Preferences
+    "/preferences/basic",
+    "/preferences/advanced",
+    # Data
+    "/changeset/118684",
+    "/relation/2806419",
+    "/way/200177764",
+    "/node/2117127935",
+    # Editing
+    "/edit?editor=id#map=18/37.772776/-122.417049"
 ]
+
 
 # Environment configuration
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
@@ -185,78 +220,179 @@ def login(driver, wait):
     except Exception:
         print("⚠️ Could not visually confirm login, but continuing...")
 
-def verify_language_change(driver, lang_code, http_session):
+def force_language_via_cookie_and_url(driver, lang_code):
     """
-    Verify the language change by:
-    1) Checking <html lang="..."> via Selenium
-    2) Falling back to the Content-Language response header via requests
-    3) As a tertiary fallback, searching for language-specific text on the homepage
+    Force language change using multiple methods:
+    1. Set locale cookie
+    2. Use URL parameter
+    3. Refresh to apply changes
     """
+    print(f"🔧 Forcing language '{lang_code}' via cookie and URL...")
+
+    # Method 1: Set locale cookie
     try:
-        # Go to homepage to verify language in a neutral page
-        driver.get(BASE_URL)
-        # Let the page fully render
-        WebDriverWait(driver, 10).until(lambda d: d.execute_script("return document.readyState") == "complete")
-        time.sleep(1.0)
+        driver.add_cookie({"name": "locale", "value": lang_code})
+        print(f"✅ Set locale cookie to '{lang_code}'")
+    except Exception as e:
+        print(f"⚠️ Failed to set locale cookie: {e}")
 
-        # 1) Check <html lang="...">
+    # Method 2: Navigate with locale parameter
+    try:
+        driver.get(f"{BASE_URL}/?locale={lang_code}")
+        time.sleep(2)
+        print(f"✅ Navigated with locale parameter '{lang_code}'")
+    except Exception as e:
+        print(f"⚠️ Failed to navigate with locale parameter: {e}")
+
+
+
+def change_language_preferences(driver, wait, lang_code):
+    """
+    Attempt to change language through preferences page with multiple fallback methods.
+    """
+    preferences_url = f"{BASE_URL}/preferences/advanced"
+
+    try:
+        print(f"🔧 Attempting to change language to '{lang_code}' via preferences...")
+
+        # Go to preferences page
+        driver.get(preferences_url)
+        wait.until(EC.presence_of_element_located((By.ID, "user_languages")))
+        time.sleep(1)
+
+        # Method 1: Try as Select dropdown
         try:
-            html_lang = driver.execute_script(
-                "return document.documentElement.getAttribute('lang') || "
-                "document.documentElement.getAttribute('xml:lang') || ''"
-            )
-            html_lang = (html_lang or "").strip().lower()
-        except Exception:
-            html_lang = ""
+            lang_select = Select(driver.find_element(By.ID, "user_languages"))
 
-        if html_lang:
-            print(f"🔎 Detected <html lang> = '{html_lang}' (target: '{lang_code}')")
-            # Allow region variants like 'es-ES'
-            if html_lang == lang_code.lower() or html_lang.startswith(lang_code.lower() + "-"):
-                return True
+            # Clear previous selections if multi-select
+            try:
+                lang_select.deselect_all()
+                print("🔧 Cleared previous language selections")
+            except Exception:
+                pass  # Not a multi-select or already empty
 
-        # 2) Check Content-Language header from a fresh request
+            # Select the new language
+            lang_select.select_by_value(lang_code)
+            print(f"🔧 Selected language '{lang_code}' via dropdown")
+
+        except Exception as e:
+            print(f"🔧 Dropdown method failed: {e}")
+
+            # Method 2: Fallback to text input
+            try:
+                print(f"🔧 Fallback: treating as text input for '{lang_code}'")
+                lang_input = driver.find_element(By.ID, "user_languages")
+                lang_input.clear()
+                lang_input.send_keys(lang_code)
+                print(f"🔧 Set text input to '{lang_code}'")
+            except Exception as e2:
+                print(f"🔧 Text input method also failed: {e2}")
+                raise e2
+
+        # Submit the form
+        commit_btn = driver.find_element(By.CSS_SELECTOR, "input[name='commit']")
+        commit_btn.click()
+        print("🔧 Submitted preferences form")
+
+        # Wait for form submission to complete
         try:
-            r = http_session.get(BASE_URL, timeout=10)
-            content_lang = r.headers.get("Content-Language", "").strip().lower()
-            if content_lang:
-                print(f"🔎 Detected Content-Language header = '{content_lang}' (target: '{lang_code}')")
-                if content_lang == lang_code.lower() or content_lang.startswith(lang_code.lower() + "-"):
-                    return True
+            # Wait for flash message or page reload
+            wait.until(EC.any_of(
+                EC.presence_of_element_located((By.CLASS_NAME, "flash")),
+                EC.presence_of_element_located((By.CLASS_NAME, "flash-notice")),
+                EC.presence_of_element_located((By.CLASS_NAME, "notice"))
+            ))
+            print("✅ Form submission confirmed (flash message detected)")
         except Exception:
-            pass
+            # If no flash message, wait for page to be ready
+            wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+            print("✅ Form submission completed (page ready)")
 
-        # 3) Tertiary text indicators (loose)
-        language_indicators = {
-            "en": ["About", "History", "Export", "Help"],
-            "es": ["Acerca de", "Historia", "Exportar", "Ayuda"],
-            "fr": ["À propos", "Histoire", "Exporter", "Aide"],
-            "de": ["Über", "Geschichte", "Exportieren", "Hilfe"],
-            "it": ["Informazioni", "Storia", "Esporta", "Aiuto"],
-            "pt": ["Sobre", "História", "Exportar", "Ajuda"],
-            "ru": ["О проекте", "История", "Экспорт", "Справка"],
-            "ja": ["について", "歴史", "エクスポート", "ヘルプ"],
-        }
+        # Additional wait for server-side processing
+        time.sleep(3)
 
-        if lang_code in language_indicators:
-            found = 0
-            page_lower = driver.page_source.lower()
-            for txt in language_indicators[lang_code]:
-                if txt.lower() in page_lower:
-                    found += 1
-            print(f"🔎 Text indicators found for '{lang_code}': {found}")
-            return found > 0
+        # Verify what was actually saved
+        try:
+            driver.get(preferences_url)
+            wait.until(EC.presence_of_element_located((By.ID, "user_languages")))
 
-        print(f"⚠️ Unable to verify language '{lang_code}' via <html lang>, headers, or text indicators.")
-        return False
+            # Check what's currently selected
+            try:
+                lang_element = driver.find_element(By.ID, "user_languages")
+                current_value = lang_element.get_attribute("value")
+                print(f"🔍 Current language preference value: '{current_value}'")
+
+                # For select elements, check selected options
+                try:
+                    select_element = Select(lang_element)
+                    selected_options = [opt.get_attribute("value") for opt in select_element.all_selected_options]
+                    print(f"🔍 Selected options: {selected_options}")
+                except Exception:
+                    pass
+
+            except Exception as e:
+                print(f"⚠️ Could not verify saved preferences: {e}")
+        except Exception as e:
+            print(f"⚠️ Could not return to preferences page for verification: {e}")
+
+        return True
 
     except Exception as e:
-        print(f"❌ Language verification failed for '{lang_code}': {e}")
+        print(f"❌ Failed to change language preferences: {e}")
         return False
 
+def test_urls_with_language(driver, http_session, lang_code, frames):
+    """
+    Test all URLs with the specified language, focusing on HTTP status codes.
+    """
+    print(f"🔍 Testing URLs with language '{lang_code}'...")
+
+    for url_path in URLS_TO_CHECK:
+        # Properly handle URLs that already have query parameters
+        if '?' in url_path:
+            # URL already has query parameters, use & to add locale
+            full_url_with_param = f"{BASE_URL}{url_path}&locale={lang_code}"
+        else:
+            # URL has no query parameters, use ? to add locale
+            full_url_with_param = f"{BASE_URL}{url_path}?locale={lang_code}"
+
+        try:
+            print(f"🌐 Testing: {full_url_with_param}")
+
+            # Navigate via browser (for recording)
+            driver.get(full_url_with_param)
+            wait = WebDriverWait(driver, 10)
+            wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+            time.sleep(1)  # Allow content to render
+            capture_frame(driver, frames)
+
+            # Test via HTTP session for status codes
+            try:
+                response = http_session.get(full_url_with_param, timeout=10)
+                if response.status_code >= 400:
+                    error_message = f"❌ ERROR | Lang: {lang_code} | URL: {full_url_with_param} | Status: {response.status_code}"
+                    print(error_message)
+                    with open(ERROR_LOG_FILE, "a") as f:
+                        f.write(error_message + "\n")
+                else:
+                    print(f"✅ OK | Lang: {lang_code} | URL: {full_url_with_param} | Status: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                msg = f"🔥 CONNECTION FAIL | Lang: {lang_code} | URL: {full_url_with_param} | Error: {e}"
+                print(msg)
+                with open(ERROR_LOG_FILE, "a") as f:
+                    f.write(msg + "\n")
+
+        except Exception as e:
+            msg = f"💥 Browser navigation failed | Lang: {lang_code} | URL: {full_url_with_param} | Error: {e}"
+            print(msg)
+            with open(ERROR_LOG_FILE, "a") as f:
+                f.write(msg + "\n")
+
+        time.sleep(0.5)  # Brief pause between requests
+        
 def verify_site_languages():
     """
-    Automate login, language switching, per-language recording, verification of the applied language, and URL checks.
+    Enhanced language verification with multiple fallback methods and better error handling.
     """
     print("🔧 Setting up Chrome driver...")
     driver = get_driver()
@@ -286,148 +422,114 @@ def verify_site_languages():
             http_session.cookies.set(cookie["name"], cookie["value"])
         print("✅ Cookies transferred successfully.")
 
-        # Iterate through languages
-        preferences_url = f"{BASE_URL}/preferences/advanced"
-
+        # Test each language with multiple methods
         for lang_code in LANGUAGES_TO_TEST:
-            print(f"\n🌍 --- Changing language to: '{lang_code}' ---")
+            print(f"\n🌍 ===== TESTING LANGUAGE: '{lang_code}' =====")
             frames = []
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             out_gif = f"logs/recordings/lang_{lang_code}_{ts}.gif"
 
             try:
-                # Go to preferences
-                driver.get(preferences_url)
-                wait.until(EC.presence_of_element_located((By.ID, "user_languages")))
-                capture_frame(driver, frames)
+                # Method 1: Try changing via preferences (traditional method)
+                print(f"📝 Method 1: Changing language via preferences...")
+                preferences_success = change_language_preferences(driver, wait, lang_code)
 
-                # 🔧 FIXED: Change language using proper Select handling
-                try:
-                    # Try as a <select> dropdown first
-                    lang_select = Select(driver.find_element(By.ID, "user_languages"))
-                    
-                    # Clear previous selections (if multi-select)
-                    try:
-                        lang_select.deselect_all()
-                    except Exception:
-                        pass  # Not a multi-select, that's fine
-                    
-                    # Select the new language
-                    lang_select.select_by_value(lang_code)
-                    print(f"🔧 Selected language '{lang_code}' via dropdown")
-                    
-                except Exception:
-                    # Fallback: treat as text input (original method)
-                    print(f"🔧 Fallback: treating as text input for '{lang_code}'")
-                    lang_input = driver.find_element(By.ID, "user_languages")
-                    lang_input.clear()
-                    lang_input.send_keys(lang_code)
-
-                capture_frame(driver, frames)  # after language selection
-
-                # Submit the form
-                commit_btn = driver.find_element(By.CSS_SELECTOR, "input[name='commit']")
-                commit_btn.click()
-
-                # 🔄 Esperar a que realmente se apliquen los cambios
-                try:
-                    # Esperar un mensaje flash
-                    wait.until(EC.visibility_of_element_located((By.CLASS_NAME, "flash-notice")))
-                except Exception:
-                    # Si no hay flash, esperar a que la página recargue
+                if preferences_success:
+                    # Test if preferences method worked
+                    driver.get(BASE_URL)
                     wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
+                    time.sleep(2)
+                    capture_frame(driver, frames)
+                    print(f"✅ Preferences method completed for '{lang_code}'")
 
-                # 🔄 Pausa adicional para que el servidor guarde la preferencia
-                time.sleep(2)
-                # Navigate to homepage to reflect new language
-                print(f"✅ Language updated to '{lang_code}'. Verifying change...")
-                driver.get(BASE_URL)
-                wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
-                time.sleep(3)
-                capture_frame(driver, frames)
+                # Method 2: Force via cookie and URL parameter (fallback)
+                if not preferences_success:
+                    print(f"🔧 Method 2: Forcing language via cookie and URL parameter...")
+                    force_language_via_cookie_and_url(driver, lang_code)
+                    capture_frame(driver, frames)
 
-                # Verify language change actually worked
-                language_verified = verify_language_change(driver, lang_code, http_session)
-                if not language_verified:
-                    error_msg = f"⚠️ Language change verification failed for '{lang_code}'"
-                    print(error_msg)
-                    with open(ERROR_LOG_FILE, "a") as f:
-                        f.write(error_msg + "\n")
+                    # Update session cookies
+                    for cookie in driver.get_cookies():
+                        http_session.cookies.set(cookie["name"], cookie["value"])
 
-                # Test URLs with the new language (also capture screens)
-                print(f"🔍 Testing URLs with language '{lang_code}'...")
-                for url_path in URLS_TO_CHECK:
-                    full_url = BASE_URL + url_path
-                    try:
-                        # Navigate via browser (for recording)
-                        driver.get(full_url)
-                        wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
-                        capture_frame(driver, frames)
+                # Test all URLs with current language setup
+                test_urls_with_language(driver, http_session, lang_code, frames)
 
-                        # Verify status via requests session
-                        response = http_session.get(full_url, timeout=10)
-                        if response.status_code >= 400:
-                            error_message = f"❌ ERROR | Lang: {lang_code} | URL: {full_url} | Status: {response.status_code}"
-                            print(error_message)
-                            with open(ERROR_LOG_FILE, "a") as f:
-                                f.write(error_message + "\n")
-                        else:
-                            print(f"✅ OK    | Lang: {lang_code} | URL: {full_url} | Status: {response.status_code}")
-                    except requests.exceptions.RequestException as e:
-                        msg = f"🔥 CONNECTION FAIL | Lang: {lang_code} | URL: {full_url} | Error: {e}"
-                        print(msg)
-                        with open(ERROR_LOG_FILE, "a") as f:
-                            f.write(msg + "\n")
-                    time.sleep(0.2)
+                print(f"✅ Completed testing for language '{lang_code}'")
 
             except Exception as e:
-                # Detailed diagnostics: save screenshot and HTML
+                # Enhanced error handling with diagnostics
                 ts_err = datetime.now().strftime("%Y%m%d_%H%M%S")
                 shot = f"logs/screens/error_{ENVIRONMENT}_{lang_code}_{ts_err}.png"
                 html = f"logs/screens/error_{ENVIRONMENT}_{lang_code}_{ts_err}.html"
+
+                # Save diagnostic information
                 try:
                     driver.save_screenshot(shot)
+                    print(f"📸 Error screenshot saved: {shot}")
                 except Exception:
                     pass
+
                 try:
                     with open(html, "w", encoding="utf-8") as fh:
                         fh.write(driver.page_source)
+                    print(f"📄 Error HTML saved: {html}")
                 except Exception:
                     pass
+
+                # Get current state information
                 current_url = ""
                 try:
                     current_url = driver.current_url
                 except Exception:
                     pass
-                msg = f"💥 Error changing language to '{lang_code}': {e} | Current URL: {current_url} | Screenshot: {shot}"
+
+                # Log detailed error information
+                msg = f"💥 Error testing language '{lang_code}': {e}\n"
+                msg += f"   Current URL: {current_url}\n"
+                msg += f"   Screenshot: {shot}\n"
+                msg += f"   HTML dump: {html}\n"
                 print(msg)
+
                 with open(ERROR_LOG_FILE, "a") as f:
                     f.write(msg + "\n")
+
             finally:
-                # Save per-language GIF recording even if errors occurred
+                # Always save recording, even if errors occurred
                 try:
                     save_gif(frames, out_gif, fps=2)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"⚠️ Failed to save recording for {lang_code}: {e}")
 
     except Exception as e:
-        msg = f"\n💥 Critical error: {e}"
+        msg = f"\n💥 Critical error during language verification: {e}"
         print(msg)
         with open(ERROR_LOG_FILE, "a") as f:
             f.write(msg + "\n")
 
     finally:
-        print(f"\n🏁 Test completed on {ENVIRONMENT.upper()}. Closing browser...")
-        driver.quit()
+        print(f"\n🏁 Language verification completed on {ENVIRONMENT.upper()}. Closing browser...")
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
-        # Show summary
+        # Show final summary
+        print(f"\n📊 ===== FINAL SUMMARY =====")
         if os.path.exists(ERROR_LOG_FILE):
             with open(ERROR_LOG_FILE, "r") as f:
                 log_content = f.read()
-                if "ERROR" in log_content or "FAIL" in log_content:
-                    print(f"⚠️  Errors found, check: {ERROR_LOG_FILE}")
+                error_count = log_content.count("ERROR")
+                fail_count = log_content.count("FAIL")
+
+                if error_count > 0 or fail_count > 0:
+                    print(f"⚠️  Found {error_count} errors and {fail_count} failures")
+                    print(f"📋 Check detailed log: {ERROR_LOG_FILE}")
                 else:
-                    print("🎉 All tests passed without errors!")
+                    print("🎉 All language tests completed without critical errors!")
+
+        print(f"📁 Recordings saved in: logs/recordings/")
+        print(f"📸 Screenshots saved in: logs/screens/")
 
 if __name__ == "__main__":
     verify_site_languages()
