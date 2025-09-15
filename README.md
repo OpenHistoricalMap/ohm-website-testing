@@ -6,8 +6,10 @@ This repository contains a script for the evaluation of the OHM website in diffe
 
 Before running the tests, you must configure your username and password to access the site:
 
+```sh
 export OHM_USERNAME=Rub21
 export OHM_PASSWORD=password
+```
 
 ### Running tests
 
@@ -40,9 +42,8 @@ These files make it easy to review which pages did not load correctly in differe
 
 ## GIFs recorded for languages
 
-#### spanish
+#### Spanish
+![Spanish test](images/lang_es_20250915_191640.gif)
 
-![](images/lang_es_20250915_191640.gif)
-
-#### Fresh 
-![](images/lang_es_20250915_191640.gif)
+#### French
+![French test](images/lang_fr_20250915_193117.gif)
